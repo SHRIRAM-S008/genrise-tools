@@ -5,7 +5,7 @@ import ToolLayout from "@/components/ToolLayout";
 import FileDropzone from "@/components/FileDropzone";
 import DownloadButton from "@/components/DownloadButton";
 import { generateMeme, type MemeOptions } from "@/lib/memeGenerator";
-import { formatBytes } from "@/lib/imageCore";
+import { canvasToBlob, formatBytes } from "@/lib/imageCore";
 import { useObjectUrl } from "@/lib/useObjectUrl";
 import type { ImageMime } from "@/lib/types";
 
@@ -16,20 +16,50 @@ const FONTS = [
   { id: "'Comic Sans MS', cursive", label: "Comic Sans" },
 ];
 
+const SIZES = [
+  { id: "original", label: "Original size", width: null },
+  { id: "1080p", label: "1080p (1080 px wide)", width: 1080 },
+] as const;
+
+type SizeId = (typeof SIZES)[number]["id"];
+
+/** Downscales a file to the target width when it is wider; otherwise returns it unchanged. */
+async function fitToWidth(file: File, width: number): Promise<File> {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  if (bitmap.width <= width) {
+    bitmap.close();
+    return file;
+  }
+  const height = Math.round((bitmap.height * width) / bitmap.width);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas not supported");
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  const mime: ImageMime = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const blob = await canvasToBlob(canvas, mime, 0.95);
+  return new File([blob], file.name, { type: mime });
+}
+
 export default function MemeGeneratorPage() {
   const [file, setFile] = useState<File | null>(null);
   const [topText, setTopText] = useState("");
   const [bottomText, setBottomText] = useState("");
-  const [fontScale, setFontScale] = useState(12);
+  // Slider value is the text size directly: larger number, larger text.
+  const [textSize, setTextSize] = useState(14);
   const [fontFamily, setFontFamily] = useState(FONTS[0].id);
   const [color, setColor] = useState("#ffffff");
   const [strokeColor, setStrokeColor] = useState("#000000");
   const [uppercase, setUppercase] = useState(true);
   const [format, setFormat] = useState<ImageMime>("image/jpeg");
+  const [sizeId, setSizeId] = useState<SizeId>("original");
   const [result, setResult] = useState<Blob | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const resultUrl = useObjectUrl(result);
+  const fontScale = 26 - textSize;
 
   // Re-render the meme as the caption and styling change — with a short
   // debounce so typing doesn't queue an encode per keystroke.
@@ -37,16 +67,22 @@ export default function MemeGeneratorPage() {
     if (!file) return;
     let cancelled = false;
     const options: MemeOptions = { fontScale, fontFamily, color, strokeColor, uppercase, format };
+    const targetWidth = SIZES.find((s) => s.id === sizeId)?.width ?? null;
 
     const id = window.setTimeout(async () => {
       try {
-        const blob = await generateMeme(file, topText, bottomText, options);
+        const source = targetWidth ? await fitToWidth(file, targetWidth) : file;
+        const blob = await generateMeme(source, topText, bottomText, options);
         if (!cancelled) {
           setResult(blob);
           setError(null);
         }
-      } catch {
-        if (!cancelled) setError("Couldn't render this image. Try a different file.");
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            `Couldn't render ${file.name}${err instanceof Error && err.message ? `: ${err.message}` : ""}. Try a different file.`
+          );
+        }
       }
     }, 250);
 
@@ -54,7 +90,10 @@ export default function MemeGeneratorPage() {
       cancelled = true;
       window.clearTimeout(id);
     };
-  }, [file, topText, bottomText, fontScale, fontFamily, color, strokeColor, uppercase, format]);
+  }, [file, topText, bottomText, fontScale, fontFamily, color, strokeColor, uppercase, format, sizeId]);
+
+  const baseName = file ? file.name.replace(/\.[^.]+$/, "") : "meme";
+  const downloadName = `${baseName}-meme.${format === "image/png" ? "png" : "jpg"}`;
 
   return (
     <ToolLayout title="Meme Generator" description="Add captions to an image and watch the meme update as you type.">
@@ -80,13 +119,14 @@ export default function MemeGeneratorPage() {
 
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-2">
-          <span className="text-sm font-medium">Text size</span>
+          <span className="text-sm font-medium">Text size: {textSize}</span>
           <input
             type="range"
             min={6}
             max={20}
-            value={26 - fontScale}
-            onChange={(e) => setFontScale(26 - Number(e.target.value))}
+            value={textSize}
+            onChange={(e) => setTextSize(Number(e.target.value))}
+            aria-valuetext={`Text size ${textSize}`}
             className="w-36"
           />
         </label>
@@ -96,6 +136,16 @@ export default function MemeGeneratorPage() {
             {FONTS.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-2">
+          <span className="text-sm font-medium">Output size</span>
+          <select value={sizeId} onChange={(e) => setSizeId(e.target.value as SizeId)} className="rounded-lg border border-border px-3 py-2">
+            {SIZES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
               </option>
             ))}
           </select>
@@ -133,14 +183,14 @@ export default function MemeGeneratorPage() {
         </div>
       </div>
 
-      {error && <p className="text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-destructive">{error}</p>}
 
       {result && resultUrl && (
         <div className="flex flex-col items-start gap-4 rounded-2xl border border-border p-5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={resultUrl} alt="Meme preview" className="max-w-full rounded-lg" />
           <p className="text-sm text-muted-foreground">Live preview · {formatBytes(result.size)}</p>
-          <DownloadButton blob={result} filename={format === "image/png" ? "meme.png" : "meme.jpg"} />
+          <DownloadButton blob={result} filename={downloadName} />
         </div>
       )}
     </ToolLayout>

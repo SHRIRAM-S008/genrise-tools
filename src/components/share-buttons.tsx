@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Check, Link2, Share2 } from "lucide-react";
+import { Check, Link2, Mail, Share2 } from "lucide-react";
 
 interface ShareButtonsProps {
   title: string;
@@ -11,16 +11,29 @@ interface ShareButtonsProps {
 
 export function ShareButtons({ title, slug }: ShareButtonsProps) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const url = `https://tools.genrisetech.in/tools/${slug}`;
   const shareText = `${title} — free, browser-based, no uploads. Via GenRise`;
 
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  function flash(ok: boolean) {
+    clearTimeout(timer.current);
+    setCopied(ok);
+    setCopyFailed(!ok);
+    timer.current = setTimeout(() => {
+      setCopied(false);
+      setCopyFailed(false);
+    }, 2000);
+  }
+
   function copyLink() {
-    navigator.clipboard.writeText(url).catch(() => {
-      // clipboard blocked — still show copied state
-    });
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard
+      .writeText(url)
+      .then(() => flash(true))
+      .catch(() => flash(false));
   }
 
   async function nativeShare() {
@@ -56,11 +69,20 @@ export function ShareButtons({ title, slug }: ShareButtonsProps) {
         type="button"
         onClick={nativeShare}
         whileTap={{ scale: 0.95 }}
-        className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary active:bg-muted sm:hidden"
+        className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary active:bg-muted"
         aria-label="Share via system dialog"
       >
         <Share2 className="size-3.5" />
       </motion.button>
+
+      <motion.a
+        href={`mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(`${shareText}\n${url}`)}`}
+        whileTap={{ scale: 0.95 }}
+        className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary active:bg-muted"
+        aria-label="Share by email"
+      >
+        <Mail className="size-3.5" />
+      </motion.a>
 
       <motion.button
         type="button"
@@ -68,6 +90,7 @@ export function ShareButtons({ title, slug }: ShareButtonsProps) {
         whileTap={{ scale: 0.95 }}
         className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary active:bg-muted"
         aria-label="Copy link"
+        aria-live="polite"
       >
         <motion.span
           key={copied ? "check" : "link"}
@@ -81,7 +104,7 @@ export function ShareButtons({ title, slug }: ShareButtonsProps) {
             <Link2 className="size-3.5" />
           )}
         </motion.span>
-        {copied ? "Copied" : "Copy link"}
+        {copied ? "Copied" : copyFailed ? "Copy blocked" : "Copy link"}
       </motion.button>
     </div>
   );

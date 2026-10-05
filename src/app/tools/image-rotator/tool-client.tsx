@@ -1,30 +1,63 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import FileDropzone from "@/components/FileDropzone";
 import DownloadButton from "@/components/DownloadButton";
-import { RotateCw, FlipHorizontal, FlipVertical } from "lucide-react";
+import { RotateCw, FlipHorizontal, FlipVertical, Undo2, RotateCcw } from "lucide-react";
 import { applyRotateFlip, type RotateFlipState } from "@/lib/imageRotator";
 import { useObjectUrl } from "@/lib/useObjectUrl";
 
+const INITIAL: RotateFlipState = { rotation: 0, flipH: false, flipV: false };
+
+function describeError(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  return "the file may be corrupt or in an unsupported format";
+}
+
 export default function ImageRotatorPage() {
   const [file, setFile] = useState<File | null>(null);
-  const [state, setState] = useState<RotateFlipState>({ rotation: 0, flipH: false, flipV: false });
+  // History stack of states; the last entry is the one currently applied.
+  const [history, setHistory] = useState<RotateFlipState[]>([INITIAL]);
+  const state = history[history.length - 1];
   const [result, setResult] = useState<{ blob: Blob; filename: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
   const previewUrl = useObjectUrl(result?.blob);
 
-  async function apply(next: RotateFlipState, targetFile = file) {
-    if (!targetFile) return;
-    setState(next);
+  /** Renders `next` for `target`. Only the latest request may update the UI, and the history only advances on success. */
+  async function render(target: File, next: RotateFlipState, nextHistory: RotateFlipState[]) {
+    const id = ++requestRef.current;
     setBusy(true);
+    setError(null);
     try {
-      const output = await applyRotateFlip(targetFile, next);
+      const output = await applyRotateFlip(target, next);
+      if (id !== requestRef.current) return;
       setResult(output);
+      setHistory(nextHistory);
+    } catch (err) {
+      if (id !== requestRef.current) return;
+      setError(`Couldn't process ${target.name}: ${describeError(err)}.`);
     } finally {
-      setBusy(false);
+      if (id === requestRef.current) setBusy(false);
     }
+  }
+
+  function transform(next: RotateFlipState) {
+    if (!file) return;
+    void render(file, next, [...history, next]);
+  }
+
+  function undo() {
+    if (!file || history.length < 2) return;
+    const previous = history.slice(0, -1);
+    void render(file, previous[previous.length - 1], previous);
+  }
+
+  function reset() {
+    if (!file) return;
+    void render(file, INITIAL, [INITIAL]);
   }
 
   return (
@@ -33,10 +66,10 @@ export default function ImageRotatorPage() {
         accept="image/*"
         onFiles={(files) => {
           const picked = files[0];
-          const next = { rotation: 0 as const, flipH: false, flipV: false };
           setFile(picked);
           setResult(null);
-          void apply(next, picked);
+          setHistory([INITIAL]);
+          void render(picked, INITIAL, [INITIAL]);
         }}
         label={file ? file.name : "Click or drop an image here"}
       />
@@ -45,24 +78,49 @@ export default function ImageRotatorPage() {
         <>
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => apply({ ...state, rotation: ((state.rotation + 90) % 360) as RotateFlipState["rotation"] })}
-              className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium hover:border-primary/40"
+              onClick={() => transform({ ...state, rotation: ((state.rotation + 90) % 360) as RotateFlipState["rotation"] })}
+              disabled={busy}
+              className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium hover:border-primary/40 disabled:opacity-50"
             >
               <RotateCw className="size-4" /> Rotate 90°
             </button>
             <button
-              onClick={() => apply({ ...state, flipH: !state.flipH })}
-              className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium ${state.flipH ? "bg-primary text-primary-foreground" : "border border-border hover:border-primary/40"}`}
+              onClick={() => transform({ ...state, flipH: !state.flipH })}
+              disabled={busy}
+              aria-pressed={state.flipH}
+              className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 ${state.flipH ? "bg-primary text-primary-foreground" : "border border-border hover:border-primary/40"}`}
             >
               <FlipHorizontal className="size-4" /> Flip horizontal
             </button>
             <button
-              onClick={() => apply({ ...state, flipV: !state.flipV })}
-              className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium ${state.flipV ? "bg-primary text-primary-foreground" : "border border-border hover:border-primary/40"}`}
+              onClick={() => transform({ ...state, flipV: !state.flipV })}
+              disabled={busy}
+              aria-pressed={state.flipV}
+              className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50 ${state.flipV ? "bg-primary text-primary-foreground" : "border border-border hover:border-primary/40"}`}
             >
               <FlipVertical className="size-4" /> Flip vertical
             </button>
+            <button
+              onClick={undo}
+              disabled={busy || history.length < 2}
+              className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium hover:border-primary/40 disabled:opacity-50"
+            >
+              <Undo2 className="size-4" /> Undo
+            </button>
+            <button
+              onClick={reset}
+              disabled={busy || history.length < 2}
+              className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium hover:border-primary/40 disabled:opacity-50"
+            >
+              <RotateCcw className="size-4" /> Reset
+            </button>
           </div>
+
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
           {previewUrl && (
             <div className="rounded-2xl border border-border p-5">

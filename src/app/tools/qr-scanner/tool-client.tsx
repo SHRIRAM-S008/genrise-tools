@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import ToolLayout from "@/components/ToolLayout";
 import FileDropzone from "@/components/FileDropzone";
+import DownloadButton from "@/components/DownloadButton";
 import { CopyButton } from "@/components/copy-button";
 import { CheckCircle2, Camera, ExternalLink } from "lucide-react";
 import {
@@ -20,12 +21,29 @@ import {
 
 type Mode = "image" | "camera";
 
+/** Decode at roughly 10 frames per second; decoding every frame wastes CPU without finding codes faster. */
+const DECODE_INTERVAL_MS = 100;
+const HISTORY_LIMIT = 100;
+
+type HistoryEntry = { text: string; kind: ScanResult["kind"]; scannedAt: string };
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+}
+
+function toCsv(entries: HistoryEntry[]): string {
+  const escape = (value: string) => `"${value.replace(/"/g, '""')}"`;
+  const rows = entries.map((e) => [escape(e.scannedAt), escape(e.kind), escape(e.text)].join(","));
+  return ["scanned_at,kind,content", ...rows].join("\n");
+}
+
 export default function QrScannerPage() {
   const [mode, setMode] = useState<Mode>("image");
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<CameraFailure | null>(null);
   const [cameras, setCameras] = useState<CameraOption[]>([]);
@@ -35,6 +53,8 @@ export default function QrScannerPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
+  const lastDecodeRef = useRef(0);
+  const decodingRef = useRef(false);
 
   // Never leave the camera running behind the user's back.
   useEffect(
@@ -45,10 +65,19 @@ export default function QrScannerPage() {
     []
   );
 
+  const historyCsv = useMemo(() => toCsv(history), [history]);
+  const historyJson = useMemo(() => JSON.stringify(history, null, 2), [history]);
+  const csvBlob = useMemo(() => new Blob([historyCsv], { type: "text/csv;charset=utf-8" }), [historyCsv]);
+  const jsonBlob = useMemo(() => new Blob([historyJson], { type: "application/json" }), [historyJson]);
+
   function accept(text: string) {
     const scan = describeScan(text);
     setResult(scan);
-    setHistory((prev) => (prev[0] === text ? prev : [text, ...prev].slice(0, 8)));
+    setHistory((prev) =>
+      prev[0]?.text === text
+        ? prev
+        : [{ text, kind: scan.kind, scannedAt: new Date().toISOString() }, ...prev].slice(0, HISTORY_LIMIT)
+    );
     setError(null);
   }
 
@@ -67,11 +96,31 @@ export default function QrScannerPage() {
     }
   }
 
+  // Ctrl/Cmd+V with an image on the clipboard decodes it directly.
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      if (isTypingTarget(e.target)) return;
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
+      const file = item?.getAsFile();
+      if (!file) return;
+      e.preventDefault();
+      if (mode === "camera") {
+        stopCamera();
+        setMode("image");
+      }
+      void handleFile(file);
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+    // handleFile and stopCamera only use state setters and refs, so re-binding per render is safe.
+  });
+
   function stopCamera() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
+    decodingRef.current = false;
     if (videoRef.current) videoRef.current.srcObject = null;
     setScanning(false);
   }
@@ -99,6 +148,7 @@ export default function QrScannerPage() {
       if (active) setDeviceId(active);
 
       setScanning(true);
+      lastDecodeRef.current = 0;
       tick();
     } catch (err) {
       setCameraError(describeCameraError(err));
@@ -114,6 +164,9 @@ export default function QrScannerPage() {
   }
 
   function tick() {
+    // A decode is already in flight; its callback schedules the next frame.
+    if (decodingRef.current) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d", { willReadFrequently: true });
@@ -123,27 +176,40 @@ export default function QrScannerPage() {
       return;
     }
 
+    const now = performance.now();
+    if (now - lastDecodeRef.current < DECODE_INTERVAL_MS) {
+      rafRef.current = requestAnimationFrame(tick);
+      return;
+    }
+    lastDecodeRef.current = now;
+    decodingRef.current = true;
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    void decodeImageData(ctx.getImageData(0, 0, canvas.width, canvas.height), canvas).then((text) => {
-      if (!streamRef.current) return;
-      if (text) {
-        accept(text);
-        stopCamera();
-      } else {
-        rafRef.current = requestAnimationFrame(tick);
-      }
-    });
+    void decodeImageData(ctx.getImageData(0, 0, canvas.width, canvas.height), canvas)
+      .catch(() => null)
+      .then((text) => {
+        decodingRef.current = false;
+        if (!streamRef.current) return;
+        if (text) {
+          accept(text);
+          stopCamera();
+        } else {
+          rafRef.current = requestAnimationFrame(tick);
+        }
+      });
   }
+
+  const previous = history.slice(1);
 
   return (
     <ToolLayout
       title="QR Code Scanner"
       description="Scan a QR code from your camera or an image file — decoded in your browser, never uploaded."
     >
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {(["image", "camera"] as Mode[]).map((m) => (
           <button
             key={m}
@@ -159,6 +225,7 @@ export default function QrScannerPage() {
             {m === "image" ? "Scan an image" : "Use my camera"}
           </button>
         ))}
+        <span className="text-xs text-muted-foreground">Tip: press Ctrl/Cmd+V to scan an image from your clipboard.</span>
       </div>
 
       {mode === "image" ? (
@@ -298,17 +365,28 @@ export default function QrScannerPage() {
         for a link, Wi-Fi network, or contact card.
       </p>
 
-      {history.length > 1 && (
-        <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium">Recent scans (this session)</span>
-          <ul className="flex flex-col gap-1">
-            {history.slice(1).map((text, i) => (
-              <li key={`${text}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
-                <span className="truncate font-mono text-xs">{text}</span>
-                <CopyButton value={text} label="Copy" className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-primary" />
-              </li>
-            ))}
-          </ul>
+      {history.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-medium">Scan history (this session, {history.length})</span>
+            <div className="flex flex-wrap gap-2">
+              <DownloadButton blob={csvBlob} filename="qr-scan-history.csv" label="Export CSV" />
+              <DownloadButton blob={jsonBlob} filename="qr-scan-history.json" label="Export JSON" />
+            </div>
+          </div>
+          {previous.length > 0 && (
+            <ul className="flex max-h-72 flex-col gap-1 overflow-auto">
+              {previous.map((entry, i) => (
+                <li
+                  key={`${entry.scannedAt}-${i}`}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
+                >
+                  <span className="truncate font-mono text-xs">{entry.text}</span>
+                  <CopyButton value={entry.text} label="Copy" className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-primary" />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </ToolLayout>

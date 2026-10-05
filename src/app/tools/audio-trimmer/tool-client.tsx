@@ -41,6 +41,20 @@ export default function AudioTrimmerPage() {
     };
   }, []);
 
+  // Space toggles preview playback, unless focus is on a control that already uses Space.
+  useEffect(() => {
+    if (!buffer) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== "Space" || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, button, [contenteditable='true']")) return;
+      e.preventDefault();
+      playSelection();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   async function handleFiles(files: File[]) {
     const file = files[0];
     if (!file) return;
@@ -111,6 +125,7 @@ export default function AudioTrimmerPage() {
               <span className="text-sm font-medium">Start: {formatTime(start)}</span>
               <input
                 type="range"
+                aria-label="Start time"
                 min={0}
                 max={buffer.duration}
                 step={0.01}
@@ -122,6 +137,7 @@ export default function AudioTrimmerPage() {
               <span className="text-sm font-medium">End: {formatTime(end)}</span>
               <input
                 type="range"
+                aria-label="End time"
                 min={0}
                 max={buffer.duration}
                 step={0.01}
@@ -158,7 +174,7 @@ export default function AudioTrimmerPage() {
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium">Fade in/out: {Math.round(fade * 1000)}ms</span>
-              <input type="range" min={0} max={0.5} step={0.01} value={fade} onChange={(e) => setFade(Number(e.target.value))} className="w-40" />
+              <input type="range" aria-label="Fade in and out duration" min={0} max={0.5} step={0.01} value={fade} onChange={(e) => setFade(Number(e.target.value))} className="w-40" />
             </label>
           </div>
 
@@ -166,6 +182,8 @@ export default function AudioTrimmerPage() {
             Selection: {formatTime(selectionLength)} of {formatTime(buffer.duration)} ·{" "}
             {buffer.numberOfChannels === 1 ? "mono" : "stereo"} · {Math.round(buffer.sampleRate / 1000)} kHz
           </p>
+
+          <p className="mt-3 text-xs text-muted-foreground">Tip: press Space to play or stop the selection.</p>
 
           <div className="mt-4 flex flex-wrap gap-3">
             <button

@@ -4,10 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { motion } from "motion/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { FavoriteButton } from "@/components/favorite-button";
 import { ShareButtons } from "@/components/share-buttons";
+import { ToolNextSteps } from "@/components/tool-next-steps";
 import { ToolSample } from "@/components/tool-sample";
 import { tools } from "@/lib/tools";
+import { recordToolVisit } from "@/lib/toolUsage";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import { categoryTileClass } from "@/lib/categoryStyles";
 
@@ -22,6 +25,10 @@ export default function ToolLayout({ title, description, children }: ToolLayoutP
   const slug = pathname.split("/").pop() ?? "";
   const tool = tools.find((t) => t.slug === slug);
   const reducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    if (tool) recordToolVisit(tool.slug);
+  }, [tool]);
 
   const transition = reducedMotion
     ? { duration: 0 }
@@ -56,7 +63,8 @@ export default function ToolLayout({ title, description, children }: ToolLayoutP
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
         <p className="mt-2 text-sm text-muted-foreground sm:text-base">{description}</p>
 
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <FavoriteButton slug={slug} />
           <ShareButtons title={title} slug={slug} />
         </div>
       </motion.div>
@@ -69,6 +77,10 @@ export default function ToolLayout({ title, description, children }: ToolLayoutP
       >
         {children}
       </motion.div>
+
+      <div className="mt-8">
+        <ToolNextSteps slug={slug} />
+      </div>
 
       <ToolSample slug={slug} />
     </main>

@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
+import { CopyButton } from "@/components/copy-button";
+import { Download } from "lucide-react";
 
 const PRESET = `> initializing connection...
 > bypassing firewall [OK]
@@ -10,11 +12,29 @@ const PRESET = `> initializing connection...
 > downloading mainframe.dat [######################] 100%
 > connection closed.`;
 
+/** Base delays in ms at 1× speed. The slider scales them, so 2× halves them. */
+const CHAR_DELAY_MIN = 15;
+const CHAR_DELAY_JITTER = 25;
+const LINE_DELAY = 120;
+
 export default function HackerTerminalPage() {
   const [script, setScript] = useState(PRESET);
   const [output, setOutput] = useState("");
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
   const timeoutRef = useRef<number | null>(null);
+  // Read speed at each tick so changing the slider mid-playback takes effect right away.
+  const speedRef = useRef(speed);
+
+  useEffect(() => {
+    speedRef.current = speed;
+  }, [speed]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   function play() {
     if (playing) return;
@@ -29,8 +49,8 @@ export default function HackerTerminalPage() {
       }
       setOutput((prev) => prev + script[i]);
       i++;
-      const delay = script[i - 1] === "\n" ? 120 : 15 + Math.random() * 25;
-      timeoutRef.current = window.setTimeout(tick, delay);
+      const baseDelay = script[i - 1] === "\n" ? LINE_DELAY : CHAR_DELAY_MIN + Math.random() * CHAR_DELAY_JITTER;
+      timeoutRef.current = window.setTimeout(tick, baseDelay / speedRef.current);
     }
     tick();
   }
@@ -38,6 +58,22 @@ export default function HackerTerminalPage() {
   function stop() {
     if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
     setPlaying(false);
+  }
+
+  function reset() {
+    stop();
+    setScript(PRESET);
+    setOutput("");
+  }
+
+  function download() {
+    if (!output) return;
+    const url = URL.createObjectURL(new Blob([output], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "terminal-output.txt";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -52,7 +88,23 @@ export default function HackerTerminalPage() {
         />
       </label>
 
-      <div className="flex gap-3">
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-2">
+          <span className="text-sm font-medium">Speed: {speed.toFixed(2)}×</span>
+          <input
+            type="range"
+            min={0.25}
+            max={4}
+            step={0.25}
+            value={speed}
+            onChange={(e) => setSpeed(Number(e.target.value))}
+            aria-label="Typing speed"
+            className="w-48"
+          />
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
         <button
           onClick={play}
           disabled={playing}
@@ -65,12 +117,32 @@ export default function HackerTerminalPage() {
             Stop
           </button>
         )}
+        <button
+          onClick={reset}
+          title="Stop playback, restore the default script, and clear the output"
+          className="w-fit rounded-full border border-border px-6 py-3 font-medium hover:border-primary/40"
+        >
+          Reset
+        </button>
       </div>
 
       <div className="min-h-64 whitespace-pre-wrap rounded-2xl border border-border bg-black p-5 font-mono text-sm text-green-400">
         {output}
         <span className="animate-pulse">▌</span>
       </div>
+
+      {output && !playing && (
+        <div className="flex flex-wrap gap-3">
+          <CopyButton value={output} label="Copy output" />
+          <button
+            onClick={download}
+            className="inline-flex w-fit items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium hover:border-primary/40"
+          >
+            <Download className="size-3.5" />
+            Download .txt
+          </button>
+        </div>
+      )}
     </ToolLayout>
   );
 }

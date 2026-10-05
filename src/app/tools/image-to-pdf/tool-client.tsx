@@ -14,6 +14,30 @@ const PAGE_SIZES: { id: PdfPageSize; label: string }[] = [
   { id: "image", label: "Fit to image" },
 ];
 
+function reasonOf(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : "the file could not be decoded";
+}
+
+/**
+ * imagesToPdf is all-or-nothing, so on failure retry each file on its own to
+ * name the one that breaks the build instead of reporting a generic error.
+ */
+async function explainFailure(
+  files: File[],
+  pageSize: PdfPageSize,
+  marginMm: number,
+  err: unknown
+): Promise<string> {
+  for (const file of files) {
+    try {
+      await imagesToPdf([file], { pageSize, marginMm });
+    } catch (fileErr) {
+      return `Couldn't add ${file.name}: ${reasonOf(fileErr)}. Remove it and try again.`;
+    }
+  }
+  return `Couldn't build the PDF: ${reasonOf(err)}.`;
+}
+
 export default function ImageToPdfPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [pageSize, setPageSize] = useState<PdfPageSize>("A4");
@@ -41,8 +65,8 @@ export default function ImageToPdfPage() {
     try {
       const output = await imagesToPdf(files, { pageSize, marginMm });
       setResult(output);
-    } catch {
-      setError("Couldn't build the PDF from these images. Try a different file.");
+    } catch (err) {
+      setError(await explainFailure(files, pageSize, marginMm, err));
     } finally {
       setBusy(false);
     }

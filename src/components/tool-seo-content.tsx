@@ -50,7 +50,7 @@ export function ToolSeoContent({ tool }: ToolSeoContentProps) {
             </li>
             <li className="flex gap-3 text-sm text-muted-foreground">
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">2</span>
-              <span>Upload or select your file. Your file stays on your device — it is never uploaded to a server.</span>
+              <span>Add your input — a file, text, or settings. Everything is processed in your browser; nothing is uploaded to a server.</span>
             </li>
             <li className="flex gap-3 text-sm text-muted-foreground">
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">3</span>
@@ -58,7 +58,7 @@ export function ToolSeoContent({ tool }: ToolSeoContentProps) {
             </li>
             <li className="flex gap-3 text-sm text-muted-foreground">
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">4</span>
-              <span>Download your result instantly. The processed file is generated locally and saved directly to your device.</span>
+              <span>Copy or download your result instantly. It is generated locally on your device.</span>
             </li>
           </ol>
         </div>
@@ -80,9 +80,9 @@ export function ToolSeoContent({ tool }: ToolSeoContentProps) {
         <div className="rounded-2xl border border-border bg-muted/30 p-5">
           <h2 className="text-sm font-semibold">100% Private — No uploads, ever</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            {tool.title} runs entirely in your browser using Canvas, WebAssembly, and File APIs.
-            Your files are processed locally and never sent to any server. There is no account
-            required, no tracking of file contents, and no data collection.
+            {tool.title} runs entirely in your browser. Anything you enter or upload is processed
+            locally and never sent to a server. There is no account required, no tracking of your
+            content, and no data collection.
           </p>
         </div>
 
@@ -158,6 +158,26 @@ function getUseCases(tool: ToolMeta): string[] {
       "Bundling job-application documents into one package",
       "Previewing and exporting Markdown documents",
       "Calculating academic GPA scores",
+    ],
+    Developer: [
+      "Formatting, validating, and debugging JSON, regex, and tokens",
+      "Encoding and decoding Base64, URLs, and hashes",
+      "Generating UUIDs and checking cron schedules",
+      "Comparing text and previewing Markdown",
+    ],
+    Calculators: [
+      "Calculating percentages, BMI, age, and date differences",
+      "Converting units across measurement systems",
+      "Working out GPA and academic targets",
+    ],
+    "Audio & Video": [
+      "Trimming audio clips and recording voice notes",
+      "Converting video segments into GIFs",
+      "Recording your screen for tutorials and bug reports",
+    ],
+    Fun: [
+      "Rolling dice and picking random winners",
+      "Generating ASCII art and themed terminal effects",
     ],
     "Data & Text": [
       "Generating QR codes for links and contact info",

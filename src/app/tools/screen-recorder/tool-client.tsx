@@ -7,10 +7,47 @@ import { formatBytes } from "@/lib/imageCore";
 import { cachedFormats, NO_FORMATS, subscribeToFormats } from "@/lib/mediaRecording";
 import { useObjectUrl } from "@/lib/useObjectUrl";
 
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function formatDuration(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+/** e.g. screen-recording-2026-10-05-143012.webm */
+function timestampedName(extension: string): string {
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  return `screen-recording-${stamp}.${extension}`;
+}
+
+/** Maps getDisplayMedia / getUserMedia failures to messages the user can act on. */
+function describeCaptureError(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : err instanceof Error ? err.name : "";
+  switch (name) {
+    case "NotAllowedError":
+      return "Screen recording was blocked or cancelled. Allow screen sharing in the browser prompt, and check that the site has permission to capture the screen.";
+    case "NotFoundError":
+      return "No screen, window, or tab was available to capture. Make sure a display is connected and try again.";
+    case "NotReadableError":
+      return "The screen or microphone is in use by another app or is otherwise unreadable. Close the other app and try again.";
+    case "AbortError":
+      return "Screen recording was cancelled before it started.";
+    default:
+      return "Screen recording isn't available in this browser.";
+  }
+}
+
 export default function ScreenRecorderPage() {
   const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<Blob | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [result, setResult] = useState<{ blob: Blob; filename: string; duration: number } | null>(null);
   const [withMic, setWithMic] = useState(false);
   // MediaRecorder support can only be probed in the browser; the server
   // snapshot is empty, so hydration stays consistent.
@@ -26,16 +63,22 @@ export default function ScreenRecorderPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const tracksRef = useRef<MediaStreamTrack[]>([]);
+  // Mirrors elapsed so the recorder's onstop handler reads the latest value.
+  const elapsedRef = useRef(0);
 
-  const resultUrl = useObjectUrl(result);
+  const resultUrl = useObjectUrl(result?.blob ?? null);
   const format = formats[formatIndex];
 
   useEffect(() => {
-    if (!recording) return;
-    const startedAt = Date.now();
+    elapsedRef.current = elapsed;
+  }, [elapsed]);
+
+  useEffect(() => {
+    if (!recording || paused) return;
+    const startedAt = Date.now() - elapsedRef.current * 1000;
     const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 500);
     return () => window.clearInterval(id);
-  }, [recording]);
+  }, [recording, paused]);
 
   // Stop sharing the screen (and the mic) if the user navigates away.
   useEffect(
@@ -53,17 +96,24 @@ export default function ScreenRecorderPage() {
 
   async function start() {
     setError(null);
+    setWarning(null);
     setResult(null);
     try {
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       const tracks = [...display.getTracks()];
+
+      if (display.getAudioTracks().length === 0) {
+        setWarning(
+          "No system audio was shared, so the recording will be silent apart from your microphone. In the sharing prompt, pick a tab or the entire screen and enable its audio option."
+        );
+      }
 
       if (withMic) {
         try {
           const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
           tracks.push(...mic.getAudioTracks());
         } catch {
-          setError("Screen capture started, but the microphone was unavailable.");
+          setWarning((prev) => `${prev ? `${prev} ` : ""}The microphone was unavailable, so it isn't included.`);
         }
       }
 
@@ -80,7 +130,12 @@ export default function ScreenRecorderPage() {
       chunksRef.current = [];
       recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
       recorder.onstop = () => {
-        setResult(new Blob(chunksRef.current, { type: recorder.mimeType || "video/webm" }));
+        const mimeType = recorder.mimeType || "video/webm";
+        setResult({
+          blob: new Blob(chunksRef.current, { type: mimeType }),
+          filename: timestampedName(format?.extension ?? "webm"),
+          duration: elapsedRef.current,
+        });
         cleanup();
       };
 
@@ -88,25 +143,40 @@ export default function ScreenRecorderPage() {
       display.getVideoTracks()[0].addEventListener("ended", () => {
         if (recorder.state !== "inactive") recorder.stop();
         setRecording(false);
+        setPaused(false);
       });
 
       recorder.start();
       recorderRef.current = recorder;
       setElapsed(0);
+      elapsedRef.current = 0;
+      setPaused(false);
       setRecording(true);
-    } catch {
-      setError("Screen recording was denied or unavailable.");
+    } catch (err) {
+      setError(describeCaptureError(err));
       cleanup();
+    }
+  }
+
+  function togglePause() {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    if (recorder.state === "recording") {
+      recorder.pause();
+      setPaused(true);
+    } else if (recorder.state === "paused") {
+      recorder.resume();
+      setPaused(false);
     }
   }
 
   function stop() {
     if (recorderRef.current?.state !== "inactive") recorderRef.current?.stop();
     setRecording(false);
+    setPaused(false);
   }
 
-  const elapsedLabel = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
-  const extension = format?.extension ?? "webm";
+  const elapsedLabel = formatDuration(elapsed);
 
   return (
     <ToolLayout title="Screen Recorder" description="Record your screen — with system or microphone audio — entirely in your browser.">
@@ -144,24 +214,35 @@ export default function ScreenRecorderPage() {
           </button>
         ) : (
           <>
+            <button onClick={togglePause} className="w-fit rounded-full border border-border px-6 py-3 font-medium">
+              {paused ? "Resume" : "Pause"}
+            </button>
             <button onClick={stop} className="w-fit rounded-full border border-border px-6 py-3 font-medium">
               Stop
             </button>
             <span className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <span className="size-2 animate-pulse rounded-full bg-destructive" />
-              Recording {elapsedLabel}
+              <span className={`size-2 rounded-full bg-destructive ${paused ? "" : "animate-pulse"}`} />
+              {paused ? "Paused" : "Recording"} {elapsedLabel}
             </span>
           </>
         )}
       </div>
 
-      {error && <p className="text-destructive">{error}</p>}
+      {warning && (
+        <p role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          {warning}
+        </p>
+      )}
+
+      {error && <p role="alert" className="text-destructive">{error}</p>}
 
       {result && (
         <div className="rounded-2xl border border-border p-5">
           {resultUrl && <video controls src={resultUrl} className="mb-4 w-full rounded-lg" />}
-          <p className="mb-3 text-sm text-muted-foreground">{formatBytes(result.size)}</p>
-          <DownloadButton blob={result} filename={`screen-recording.${extension}`} />
+          <p className="mb-3 text-sm text-muted-foreground">
+            Duration {formatDuration(result.duration)} · {formatBytes(result.blob.size)}
+          </p>
+          <DownloadButton blob={result.blob} filename={result.filename} />
         </div>
       )}
     </ToolLayout>

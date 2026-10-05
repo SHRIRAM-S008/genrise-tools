@@ -121,6 +121,7 @@ const organizationJsonLd = {
   logo: `${siteUrl}/logo.png`,
   sameAs: [
     "https://github.com/SHRIRAM-S008/Genrise-tools",
+    "https://www.linkedin.com/company/genrise-tech/",
   ],
 };
 

@@ -8,10 +8,20 @@ import { BatchResults, type BatchOutput } from "@/components/batch-results";
 import { resizeImage } from "@/lib/resizeImage";
 import { loadImage } from "@/lib/imageCore";
 import { runBatch, toBatchItems, type BatchItem } from "@/lib/batch";
+import type { ImageMime } from "@/lib/types";
 
 type Mode = "pixels" | "percentage";
+type FormatChoice = "auto" | ImageMime;
 
 const PERCENT_PRESETS = [75, 50, 25];
+const SIZE_PRESETS = [512, 1080, 1920];
+
+const FORMAT_OPTIONS: { value: FormatChoice; label: string }[] = [
+  { value: "auto", label: "Same as input" },
+  { value: "image/jpeg", label: "JPEG" },
+  { value: "image/png", label: "PNG" },
+  { value: "image/webp", label: "WebP" },
+];
 
 export default function ResizeImagePage() {
   const [file, setFile] = useState<File | null>(null);
@@ -22,9 +32,16 @@ export default function ResizeImagePage() {
   const [height, setHeight] = useState<number | "">("");
   const [percentage, setPercentage] = useState(50);
   const [lockAspect, setLockAspect] = useState(true);
+  const [format, setFormat] = useState<FormatChoice>("auto");
+  const [quality, setQuality] = useState(90);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ blob: Blob; filename: string; width: number; height: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const isBatch = extraFiles.length > 1;
+  const mime = format === "auto" ? undefined : format;
+  const lossy = format === "image/jpeg" || format === "image/webp" || (format === "auto" && file?.type !== "image/png");
+  const qualityArg = lossy ? quality / 100 : undefined;
 
   async function pick(files: File[]) {
     const [selected, ...rest] = files;
@@ -36,8 +53,14 @@ export default function ResizeImagePage() {
       const { bitmap, width: w, height: h } = await loadImage(selected);
       bitmap.close();
       setSource({ width: w, height: h });
-      setWidth(w);
-      setHeight(h);
+      if (rest.length) {
+        // Batch uses a fit-within box, so start with an empty box rather than the first image's size.
+        setWidth("");
+        setHeight("");
+      } else {
+        setWidth(w);
+        setHeight(h);
+      }
     } catch {
       setSource(null);
       setError("Couldn't read that image. Try a different file.");
@@ -58,13 +81,50 @@ export default function ResizeImagePage() {
     }
   }
 
-  function options() {
+  /** Applies a preset: the longest side for a single image, or a square fit-box in batch mode. */
+  function applyPreset(size: number) {
+    setMode("pixels");
+    if (isBatch) {
+      setWidth(size);
+      setHeight(size);
+      return;
+    }
+    if (!source) return;
+    const scale = size / Math.max(source.width, source.height);
+    setWidth(Math.max(1, Math.round(source.width * scale)));
+    setHeight(Math.max(1, Math.round(source.height * scale)));
+  }
+
+  function resetToOriginal() {
+    if (!source) return;
+    setMode("pixels");
+    setWidth(source.width);
+    setHeight(source.height);
+    setPercentage(100);
+    setResult(null);
+  }
+
+  const boxW = typeof width === "number" ? width : undefined;
+  const boxH = typeof height === "number" ? height : undefined;
+  const batchReady = !!boxW || !!boxH;
+
+  /** Shrinks an image to fit inside the box while keeping its aspect ratio. Never enlarges. */
+  async function fitWithin(f: File) {
+    const { bitmap, width: w, height: h } = await loadImage(f);
+    bitmap.close();
+    const scale = Math.min(1, boxW ? boxW / w : Infinity, boxH ? boxH / h : Infinity);
+    return resizeImage(f, { percentage: scale * 100, mime, quality: qualityArg });
+  }
+
+  function singleOptions() {
     return mode === "percentage"
-      ? { percentage }
+      ? { percentage, mime, quality: qualityArg }
       : {
           width: width === "" ? undefined : width,
           height: height === "" ? undefined : height,
           maintainAspectRatio: lockAspect,
+          mime,
+          quality: qualityArg,
         };
   }
 
@@ -75,11 +135,11 @@ export default function ResizeImagePage() {
     setResult(null);
 
     // Fixed pixel dimensions on a mixed batch would distort every image that
-    // isn't the first one, so batches are always scaled by percentage.
-    if (extraFiles.length > 1) {
+    // isn't the first one, so batches are fitted inside a box instead.
+    if (isBatch) {
       const queued = extraFiles.map((item) => ({ ...item, status: "queued" as const, result: undefined, error: undefined }));
       setExtraFiles(queued);
-      await runBatch(queued, (f) => resizeImage(f, { percentage }), (updated) =>
+      await runBatch(queued, fitWithin, (updated) =>
         setExtraFiles((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
       );
       setBusy(false);
@@ -87,7 +147,7 @@ export default function ResizeImagePage() {
     }
 
     try {
-      const output = await resizeImage(file, options());
+      const output = await resizeImage(file, singleOptions());
       setResult(output);
     } catch {
       setError("Couldn't resize that image. Try a different file.");
@@ -96,70 +156,103 @@ export default function ResizeImagePage() {
     }
   }
 
+  const canRun = !!file && !busy && (!isBatch || batchReady);
+
   return (
     <ToolLayout title="Resize Image" description="Resize by pixel dimensions or percentage, with an optional aspect-ratio lock.">
       <FileDropzone
         accept="image/jpeg,image/png,image/webp"
         multiple
         onFiles={pick}
-        label={extraFiles.length > 1 ? `${extraFiles.length} images selected` : file ? file.name : "Click or drop images here"}
-        hint="JPG, PNG, or WebP — drop several to resize them all by percentage"
+        label={isBatch ? `${extraFiles.length} images selected` : file ? file.name : "Click or drop images here"}
+        hint="JPG, PNG, or WebP — drop several to resize them all to fit a box"
       />
 
-      {source && extraFiles.length <= 1 && (
+      {source && !isBatch && (
         <p className="text-sm text-muted-foreground">
           Original: {source.width} × {source.height}px
         </p>
       )}
 
-      {extraFiles.length > 1 && (
+      {isBatch && (
         <p className="text-sm text-muted-foreground">
-          Batch mode: all {extraFiles.length} images are scaled by percentage, so each keeps its own aspect ratio.
+          Batch mode: each image is shrunk to fit inside the box below (aspect ratio kept, never enlarged).
         </p>
       )}
 
-      <div className={`flex gap-2 ${extraFiles.length > 1 ? "hidden" : ""}`}>
-        {(["pixels", "percentage"] as Mode[]).map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={`rounded-full px-4 py-2 text-sm font-medium capitalize transition-colors ${
-              mode === m ? "bg-primary text-primary-foreground" : "border border-border"
-            }`}
-          >
-            {m === "pixels" ? "By pixels" : "By percentage"}
-          </button>
-        ))}
-      </div>
-
-      {mode === "pixels" && extraFiles.length <= 1 ? (
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium">Width (px)</span>
-            <input
-              type="number"
-              min={1}
-              value={width}
-              onChange={(e) => changeWidth(e.target.value === "" ? "" : Number(e.target.value))}
-              className="w-28 rounded-lg border border-border px-3 py-2"
-            />
-          </label>
-          <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium">Height (px)</span>
-            <input
-              type="number"
-              min={1}
-              value={height}
-              onChange={(e) => changeHeight(e.target.value === "" ? "" : Number(e.target.value))}
-              className="w-28 rounded-lg border border-border px-3 py-2"
-            />
-          </label>
-          <label className="flex items-center gap-2 pb-2 text-sm">
-            <input type="checkbox" checked={lockAspect} onChange={(e) => setLockAspect(e.target.checked)} />
-            Lock aspect ratio
-          </label>
+      {!isBatch && (
+        <div className="flex gap-2">
+          {(["pixels", "percentage"] as Mode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`rounded-full px-4 py-2 text-sm font-medium capitalize transition-colors ${
+                mode === m ? "bg-primary text-primary-foreground" : "border border-border"
+              }`}
+            >
+              {m === "pixels" ? "By pixels" : "By percentage"}
+            </button>
+          ))}
         </div>
-      ) : (
+      )}
+
+      {(isBatch || mode === "pixels") && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-4">
+            <label className="flex flex-col gap-2">
+              <span className="text-sm font-medium">{isBatch ? "Fit box width (px)" : "Width (px)"}</span>
+              <input
+                type="number"
+                min={1}
+                value={width}
+                onChange={(e) => changeWidth(e.target.value === "" ? "" : Number(e.target.value))}
+                className="w-28 rounded-lg border border-border px-3 py-2"
+              />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-sm font-medium">{isBatch ? "Fit box height (px)" : "Height (px)"}</span>
+              <input
+                type="number"
+                min={1}
+                value={height}
+                onChange={(e) => changeHeight(e.target.value === "" ? "" : Number(e.target.value))}
+                className="w-28 rounded-lg border border-border px-3 py-2"
+              />
+            </label>
+            {!isBatch && (
+              <label className="flex items-center gap-2 pb-2 text-sm">
+                <input type="checkbox" checked={lockAspect} onChange={(e) => setLockAspect(e.target.checked)} />
+                Lock aspect ratio
+              </label>
+            )}
+            {!isBatch && source && (
+              <button
+                type="button"
+                onClick={resetToOriginal}
+                className="rounded-full border border-border px-4 py-2 text-sm font-medium hover:border-primary/40"
+              >
+                Reset to original
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">{isBatch ? "Fit a square box:" : "Longest side:"}</span>
+            {SIZE_PRESETS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => applyPreset(p)}
+                disabled={!isBatch && !source}
+                className="rounded-full border border-border px-3 py-1.5 text-sm hover:border-primary/40 disabled:opacity-40"
+              >
+                {p}px
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isBatch && mode === "percentage" && (
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex flex-1 items-center gap-3 text-sm">
             <span className="whitespace-nowrap font-medium">Scale: {percentage}%</span>
@@ -189,17 +282,51 @@ export default function ResizeImagePage() {
         </div>
       )}
 
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-2">
+          <span className="text-sm font-medium">Output format</span>
+          <select
+            value={format}
+            onChange={(e) => setFormat(e.target.value as FormatChoice)}
+            className="rounded-lg border border-border px-3 py-2"
+          >
+            {FORMAT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {lossy && (
+          <label className="flex w-48 flex-col gap-2">
+            <span className="text-sm font-medium">Quality: {quality}%</span>
+            <input
+              type="range"
+              min={50}
+              max={100}
+              value={quality}
+              onChange={(e) => setQuality(Number(e.target.value))}
+            />
+          </label>
+        )}
+        {format === "image/png" && <span className="pb-2 text-sm text-muted-foreground">PNG is lossless; quality doesn&apos;t apply.</span>}
+      </div>
+
       <button
         onClick={run}
-        disabled={!file || busy}
+        disabled={!canRun}
         className="w-fit rounded-full bg-primary px-6 py-3 font-medium text-primary-foreground disabled:opacity-50"
       >
-        {busy ? "Resizing…" : extraFiles.length > 1 ? `Resize ${extraFiles.length} images` : "Resize"}
+        {busy ? "Resizing…" : isBatch ? `Resize ${extraFiles.length} images` : "Resize"}
       </button>
+
+      {isBatch && !batchReady && (
+        <p className="text-sm text-muted-foreground">Enter a width or height for the fit box to resize the batch.</p>
+      )}
 
       {error && <p className="text-destructive">{error}</p>}
 
-      {extraFiles.length > 1 && (
+      {isBatch && (
         <BatchResults
           items={extraFiles}
           zipName="resized-images.zip"
@@ -207,7 +334,7 @@ export default function ResizeImagePage() {
         />
       )}
 
-      {result && extraFiles.length <= 1 && (
+      {result && !isBatch && (
         <ImageResult
           blob={result.blob}
           filename={result.filename}

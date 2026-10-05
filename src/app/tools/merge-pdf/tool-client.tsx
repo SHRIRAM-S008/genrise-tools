@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import FileDropzone from "@/components/FileDropzone";
 import DownloadButton from "@/components/DownloadButton";
@@ -18,18 +18,40 @@ interface Entry {
   unreadable?: boolean;
 }
 
+/** Turns free text into a safe base filename (no extension, no path separators). */
+function safeBaseName(name: string): string {
+  const cleaned = name.trim().replace(/\.pdf$/i, "").replace(/[\\/:*?"<>|]+/g, "-").trim();
+  return cleaned || "merged";
+}
+
 export default function MergePdfPage() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ blob: Blob; filename: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [outputName, setOutputName] = useState("merged");
+
+  // Every thumbnail URL we create is tracked here, so cleanup always sees the current set
+  // (state captured by a mount-only effect would be the initial empty list).
+  const urlsRef = useRef(new Set<string>());
+
+  function trackUrl(url: string) {
+    urlsRef.current.add(url);
+    return url;
+  }
+
+  function revokeUrl(url: string | undefined) {
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    urlsRef.current.delete(url);
+  }
 
   useEffect(() => {
+    const urls = urlsRef.current;
     return () => {
-      entries.forEach((entry) => entry.thumbnail && URL.revokeObjectURL(entry.thumbnail));
+      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.clear();
     };
-    // Cleanup only needs to run on unmount; per-entry URLs are revoked on remove.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function add(files: File[]) {
@@ -45,7 +67,7 @@ export default function MergePdfPage() {
         setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, pageCount } : e)));
         const [cover] = await renderPdfThumbnails(entry.file, { maxPages: 1, maxWidth: 100 });
         if (cover) {
-          const url = URL.createObjectURL(cover.blob);
+          const url = trackUrl(URL.createObjectURL(cover.blob));
           setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, thumbnail: url } : e)));
         }
       } catch {
@@ -65,12 +87,9 @@ export default function MergePdfPage() {
     setResult(null);
   }
 
-  function remove(id: string) {
-    setEntries((prev) => {
-      const entry = prev.find((e) => e.id === id);
-      if (entry?.thumbnail) URL.revokeObjectURL(entry.thumbnail);
-      return prev.filter((e) => e.id !== id);
-    });
+  function remove(entry: Entry) {
+    revokeUrl(entry.thumbnail);
+    setEntries((prev) => prev.filter((e) => e.id !== entry.id));
     setResult(null);
   }
 
@@ -90,6 +109,7 @@ export default function MergePdfPage() {
 
   const totalPages = entries.reduce((sum, e) => sum + (e.pageCount ?? 0), 0);
   const unreadable = entries.some((e) => e.unreadable);
+  const downloadName = `${safeBaseName(outputName)}.pdf`;
 
   return (
     <ToolLayout title="Merge PDF" description="Combine multiple PDF files into one, in the order you choose.">
@@ -133,7 +153,7 @@ export default function MergePdfPage() {
                   <button aria-label={`Move ${entry.file.name} down`} onClick={() => move(i, 1)} disabled={i === entries.length - 1} className="text-muted-foreground hover:text-primary disabled:opacity-30">
                     <ChevronDown className="size-4" />
                   </button>
-                  <button aria-label={`Remove ${entry.file.name}`} onClick={() => remove(entry.id)} className="text-muted-foreground hover:text-destructive">
+                  <button aria-label={`Remove ${entry.file.name}`} onClick={() => remove(entry)} className="text-muted-foreground hover:text-destructive">
                     <X className="size-4" />
                   </button>
                 </span>
@@ -158,7 +178,8 @@ export default function MergePdfPage() {
         {entries.length > 0 && (
           <button
             onClick={() => {
-              entries.forEach((e) => e.thumbnail && URL.revokeObjectURL(e.thumbnail));
+              urlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+              urlsRef.current.clear();
               setEntries([]);
               setResult(null);
             }}
@@ -172,11 +193,24 @@ export default function MergePdfPage() {
       {error && <p className="text-destructive">{error}</p>}
 
       {result && (
-        <div className="rounded-2xl border border-border p-5">
-          <p className="mb-3 text-sm text-muted-foreground">
+        <div className="flex flex-col gap-4 rounded-2xl border border-border p-5">
+          <p className="text-sm text-muted-foreground">
             {totalPages} page(s) · {formatBytes(result.blob.size)}
           </p>
-          <DownloadButton blob={result.blob} filename={result.filename} />
+          <label className="flex flex-col gap-1 text-sm">
+            Output filename
+            <span className="flex items-center gap-2">
+              <input
+                value={outputName}
+                onChange={(e) => setOutputName(e.target.value)}
+                className="min-w-0 flex-1 rounded-lg border border-border px-3 py-2"
+              />
+              <span className="text-muted-foreground">.pdf</span>
+            </span>
+          </label>
+          <div>
+            <DownloadButton blob={result.blob} filename={downloadName} />
+          </div>
         </div>
       )}
     </ToolLayout>

@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
+import { CopyButton } from "@/components/copy-button";
+
+const LB_PER_KG = 1 / 0.45359237;
 
 function category(bmi: number): string {
   if (bmi < 18.5) return "Underweight";
@@ -9,6 +12,11 @@ function category(bmi: number): string {
   if (bmi < 30) return "Overweight";
   return "Obese";
 }
+
+type Calc =
+  | { status: "empty"; message: string }
+  | { status: "error"; message: string }
+  | { status: "ok"; bmi: number; kg: number; meters: number };
 
 export default function BmiCalculatorPage() {
   const [heightUnit, setHeightUnit] = useState<"cm" | "ftin">("cm");
@@ -18,26 +26,54 @@ export default function BmiCalculatorPage() {
   const [heightIn, setHeightIn] = useState("7");
   const [weight, setWeight] = useState("70");
 
-  const bmi = useMemo(() => {
+  const calc = useMemo<Calc>(() => {
+    const heightBlank = heightUnit === "cm" ? heightCm.trim() === "" : heightFt.trim() === "" && heightIn.trim() === "";
+    if (heightBlank || weight.trim() === "") {
+      return { status: "empty", message: "Enter your height and weight to see your BMI." };
+    }
+
     const w = Number(weight);
-    if (!w) return null;
-    const kg = weightUnit === "kg" ? w : w * 0.45359237;
+    if (!Number.isFinite(w) || w <= 0) return { status: "error", message: "Weight must be a positive number." };
+    const kg = weightUnit === "kg" ? w : w / LB_PER_KG;
+    if (kg < 2 || kg > 500) return { status: "error", message: "That weight looks unrealistic — check the value and unit." };
 
     let meters: number;
     if (heightUnit === "cm") {
       const cm = Number(heightCm);
-      if (!cm) return null;
+      if (!Number.isFinite(cm) || cm <= 0) return { status: "error", message: "Height must be a positive number." };
       meters = cm / 100;
     } else {
-      const ft = Number(heightFt) || 0;
-      const inch = Number(heightIn) || 0;
+      const ft = Number(heightFt || "0");
+      const inch = Number(heightIn || "0");
+      if (!Number.isFinite(ft) || !Number.isFinite(inch) || ft < 0 || inch < 0) {
+        return { status: "error", message: "Height must be a positive number." };
+      }
+      if (inch >= 12) return { status: "error", message: "Inches must be between 0 and 11." };
       const totalIn = ft * 12 + inch;
-      if (!totalIn) return null;
+      if (totalIn <= 0) return { status: "error", message: "Height must be a positive number." };
       meters = totalIn * 0.0254;
     }
 
-    return kg / (meters * meters);
+    if (meters < 0.5 || meters > 2.7) {
+      return { status: "error", message: "That height looks unrealistic — check the value and unit." };
+    }
+
+    return { status: "ok", bmi: kg / (meters * meters), kg, meters };
   }, [heightUnit, weightUnit, heightCm, heightFt, heightIn, weight]);
+
+  // Healthy range is BMI 18.5–24.9 at the entered height, shown in the chosen weight unit.
+  const healthyRange = useMemo(() => {
+    if (calc.status !== "ok") return null;
+    const toUnit = (kg: number) => (weightUnit === "kg" ? kg : kg * LB_PER_KG);
+    const low = toUnit(18.5 * calc.meters * calc.meters);
+    const high = toUnit(24.9 * calc.meters * calc.meters);
+    return { low: low.toFixed(1), high: high.toFixed(1) };
+  }, [calc, weightUnit]);
+
+  const copyText =
+    calc.status === "ok" && healthyRange
+      ? `BMI ${calc.bmi.toFixed(1)} (${category(calc.bmi)}). Healthy weight at ${Math.round(calc.meters * 100)} cm: ${healthyRange.low}–${healthyRange.high} ${weightUnit}.`
+      : "";
 
   return (
     <ToolLayout title="BMI Calculator" description="Calculate Body Mass Index from height and weight.">
@@ -92,10 +128,22 @@ export default function BmiCalculatorPage() {
         </label>
       </div>
 
-      {bmi !== null && (
-        <div className="rounded-2xl border border-border p-5">
-          <p className="text-lg font-semibold">BMI: {bmi.toFixed(1)}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{category(bmi)}</p>
+      {calc.status === "empty" && <p className="text-sm text-muted-foreground">{calc.message}</p>}
+      {calc.status === "error" && <p className="text-sm text-destructive">{calc.message}</p>}
+
+      {calc.status === "ok" && healthyRange && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-border p-5">
+          <p className="text-lg font-semibold">BMI: {calc.bmi.toFixed(1)}</p>
+          <p className="text-sm text-muted-foreground">{category(calc.bmi)}</p>
+          <p className="text-sm">
+            Healthy weight range at {Math.round(calc.meters * 100)} cm (BMI 18.5–24.9):{" "}
+            <span className="font-medium">
+              {healthyRange.low}–{healthyRange.high} {weightUnit}
+            </span>
+          </p>
+          <div>
+            <CopyButton value={copyText} label="Copy result" />
+          </div>
         </div>
       )}
     </ToolLayout>

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
+import DownloadButton from "@/components/DownloadButton";
 import { CopyButton } from "@/components/copy-button";
 import { JsonTree } from "@/components/json-tree";
 
@@ -13,17 +14,57 @@ interface ParseFailure {
   column?: number;
 }
 
-/** Turns "Unexpected token } in JSON at position 42" into a line/column. */
+/**
+ * Engines report JSON errors differently: Chrome says "at line 3 column 5"
+ * (newer) or "at position 42" (older), Firefox and Safari use other wording
+ * with no position at all. Parse what is there and fall back to the message.
+ */
 function describeError(error: unknown, source: string): ParseFailure {
   const message = error instanceof Error ? error.message : "Invalid JSON";
-  const match = /position (\d+)/.exec(message);
-  if (!match) return { message };
 
-  const position = Number(match[1]);
-  const upTo = source.slice(0, position);
-  const line = upTo.split("\n").length;
-  const column = position - upTo.lastIndexOf("\n");
-  return { message, line, column };
+  const lineCol = /line (\d+) column (\d+)/i.exec(message);
+  if (lineCol) return { message, line: Number(lineCol[1]), column: Number(lineCol[2]) };
+
+  const position = /position (\d+)/i.exec(message);
+  if (position) {
+    const offset = Math.min(Number(position[1]), source.length);
+    const upTo = source.slice(0, offset);
+    const line = upTo.split("\n").length;
+    const column = offset - upTo.lastIndexOf("\n");
+    return { message, line, column };
+  }
+
+  return { message };
+}
+
+interface TreeMatch {
+  path: string;
+  value: string;
+}
+
+/** Walks the parsed JSON and collects paths whose key or primitive value contains the query. */
+function findMatches(root: unknown, query: string, limit = 200): TreeMatch[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const matches: TreeMatch[] = [];
+
+  function walk(value: unknown, path: string) {
+    if (matches.length >= limit) return;
+    if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        const childPath = Array.isArray(value) ? `${path}[${key}]` : path ? `${path}.${key}` : key;
+        if (key.toLowerCase().includes(needle) && !Array.isArray(value)) {
+          matches.push({ path: childPath, value: typeof child === "object" && child !== null ? "(object or array)" : String(child) });
+        } else if (typeof child !== "object" || child === null) {
+          if (String(child).toLowerCase().includes(needle)) matches.push({ path: childPath, value: String(child) });
+        }
+        walk(child, childPath);
+      }
+    }
+  }
+
+  walk(root, "");
+  return matches;
 }
 
 export default function JsonFormatterPage() {
@@ -35,6 +76,10 @@ export default function JsonFormatterPage() {
   const [sortKeys, setSortKeys] = useState(false);
   const [failure, setFailure] = useState<ParseFailure | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const outputBlob = useMemo(() => new Blob([output], { type: "application/json" }), [output]);
+  const matches = useMemo(() => (view === "tree" ? findMatches(parsed, query) : []), [parsed, query, view]);
 
   function sortDeep(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(sortDeep);
@@ -110,9 +155,9 @@ export default function JsonFormatterPage() {
       </div>
 
       {failure && (
-        <p className="text-destructive">
+        <p role="alert" className="text-destructive">
           {failure.message}
-          {failure.line ? ` (line ${failure.line}, column ${failure.column})` : ""}
+          {failure.line !== undefined && failure.column !== undefined ? ` (line ${failure.line}, column ${failure.column})` : ""}
         </p>
       )}
 
@@ -135,8 +180,33 @@ export default function JsonFormatterPage() {
       )}
 
       {view === "tree" && parsed !== null ? (
-        <div className="max-h-[32rem] overflow-auto rounded-lg border border-border p-4">
-          <JsonTree value={parsed} />
+        <div className="flex flex-col gap-3">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search keys and values…"
+            aria-label="Search tree"
+            className="rounded-lg border border-border px-3 py-2 text-sm"
+          />
+          {query.trim() && (
+            <div className="max-h-48 overflow-auto rounded-lg border border-border p-3 font-mono text-xs">
+              <p className="mb-2 text-muted-foreground">
+                {matches.length === 0 ? "No matches" : `${matches.length}${matches.length >= 200 ? "+" : ""} match(es)`}
+              </p>
+              <ul className="flex flex-col gap-1">
+                {matches.map((m, i) => (
+                  <li key={`${m.path}-${i}`} className="break-all">
+                    <span className="text-primary">{m.path || "(root)"}</span>
+                    <span className="text-muted-foreground"> = {m.value}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="max-h-[32rem] overflow-auto rounded-lg border border-border p-4">
+            <JsonTree value={parsed} />
+          </div>
         </div>
       ) : (
         output && (
@@ -148,7 +218,10 @@ export default function JsonFormatterPage() {
               aria-label="Output JSON"
               className="rounded-lg border border-border px-3 py-2 font-mono text-sm"
             />
-            <CopyButton value={output} label="Copy output" />
+            <div className="flex flex-wrap gap-2">
+              <CopyButton value={output} label="Copy output" />
+              <DownloadButton blob={outputBlob} filename="formatted.json" label="Download .json" />
+            </div>
           </div>
         )
       )}
