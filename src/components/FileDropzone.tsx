@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
 import { UploadCloud, FileCheck2 } from "lucide-react";
+import { slugFromPath, trackEvent } from "@/lib/analytics";
 
 interface FileDropzoneProps {
   accept?: string;
@@ -20,6 +22,7 @@ export default function FileDropzone({
   hint,
 }: FileDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const pathname = usePathname();
   const [isDragging, setIsDragging] = useState(false);
   const [hasFile, setHasFile] = useState(false);
 
@@ -27,9 +30,10 @@ export default function FileDropzone({
     (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
       setHasFile(true);
+      trackEvent("file_dropped", { tool_slug: slugFromPath(pathname), file_count: fileList.length });
       onFiles(Array.from(fileList));
     },
-    [onFiles]
+    [onFiles, pathname]
   );
 
   return (

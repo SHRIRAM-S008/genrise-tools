@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ToolLayout from "@/components/ToolLayout";
 import FileDropzone from "@/components/FileDropzone";
 import { ImageResult } from "@/components/image-result";
@@ -21,12 +22,24 @@ function isValidDimension(n: number): boolean {
   return Number.isInteger(n) && n > 0 && n <= MAX_DIMENSION;
 }
 
-export default function SignatureOptimizerPage() {
+function formatParam(value: string | null): ImageMime {
+  if (value === "jpg" || value === "jpeg") return "image/jpeg";
+  if (value === "webp") return "image/webp";
+  return "image/png";
+}
+
+function positiveIntOr(value: string | null, fallback: number): number {
+  const n = Number(value);
+  return value !== null && Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+function SignatureOptimizerPageInner() {
+  const params = useSearchParams();
   const [file, setFile] = useState<File | null>(null);
-  const [width, setWidth] = useState(300);
-  const [height, setHeight] = useState(120);
-  const [targetKb, setTargetKb] = useState(20);
-  const [format, setFormat] = useState<ImageMime>("image/png");
+  const [width, setWidth] = useState(() => positiveIntOr(params.get("w"), 300));
+  const [height, setHeight] = useState(() => positiveIntOr(params.get("h"), 120));
+  const [targetKb, setTargetKb] = useState(() => positiveIntOr(params.get("kb"), 20));
+  const [format, setFormat] = useState<ImageMime>(() => formatParam(params.get("format")));
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TargetKbResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -160,5 +173,13 @@ export default function SignatureOptimizerPage() {
         </ImageResult>
       )}
     </ToolLayout>
+  );
+}
+
+export default function SignatureOptimizerPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignatureOptimizerPageInner />
+    </Suspense>
   );
 }

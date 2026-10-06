@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { Check, Mail } from "lucide-react";
 import { useReducedMotion } from "@/lib/useReducedMotion";
+import { trackEvent } from "@/lib/analytics";
 
 export function NewsletterCapture() {
   const [email, setEmail] = useState("");
@@ -15,9 +16,14 @@ export function NewsletterCapture() {
     if (!email.trim()) return;
     setStatus("loading");
     try {
-      const existing = JSON.parse(localStorage.getItem("newsletter-signups") || "[]");
-      existing.push({ email, date: new Date().toISOString() });
-      localStorage.setItem("newsletter-signups", JSON.stringify(existing));
+      const res = await fetch("/api/newsletter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source: "homepage" }),
+      });
+      if (!res.ok) throw new Error("signup failed");
+      localStorage.setItem("genrise:newsletter-subscribed", "1");
+      trackEvent("newsletter_signup", { source: "homepage" });
       setStatus("done");
       setEmail("");
     } catch {

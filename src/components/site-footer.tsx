@@ -93,10 +93,10 @@ export function SiteFooter() {
         <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-border pt-6 text-xs text-muted-foreground sm:flex-row">
           <p>© {new Date().getFullYear()} GenRise. All processing happens in your browser.</p>
           <div className="flex items-center gap-4">
-            <Link href="/tools" className="hover:text-foreground">All Tools</Link>
-            <Link href="/careerkit" className="hover:text-foreground">CareerKit</Link>
-            <Link href="/studentkit" className="hover:text-foreground">StudentKit</Link>
-            <Link href="/devkit" className="hover:text-foreground">DevKit</Link>
+            <Link href="/about" className="hover:text-foreground">About</Link>
+            <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
+            <Link href="/terms" className="hover:text-foreground">Terms</Link>
+            <Link href="/contact" className="hover:text-foreground">Contact</Link>
             <a href="https://github.com/SHRIRAM-S008/Genrise-tools" target="_blank" rel="noopener noreferrer" className="hover:text-foreground">GitHub</a>
           </div>
         </div>

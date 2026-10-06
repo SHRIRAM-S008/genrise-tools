@@ -36,6 +36,9 @@ export function GET() {
     "## Optional",
     "",
     `- [All tools](${siteUrl}/tools): searchable index of every tool`,
+    `- [Form requirements](${siteUrl}/forms): exact photo/signature specs for Indian exam forms, passports and visas`,
+    `- [Alternatives](${siteUrl}/alternatives): private, no-upload alternatives to popular online tools`,
+    `- [About](${siteUrl}/about)`,
     `- [Sitemap](${siteUrl}/sitemap.xml)`,
     ""
   );

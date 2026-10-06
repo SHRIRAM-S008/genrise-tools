@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ToolLayout from "@/components/ToolLayout";
 import FileDropzone from "@/components/FileDropzone";
 import DownloadButton from "@/components/DownloadButton";
@@ -44,13 +45,34 @@ function positive(value: string): number | null {
   return value.trim() !== "" && Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export default function PassportPhotoPage() {
+export function PassportPhotoTool({
+  defaultSize,
+  defaultKb,
+  defaultWmm,
+  defaultHmm,
+  title = "Passport Photo Maker",
+  description = "Crop and resize a photo to an exact passport, visa, or ID-card size.",
+}: {
+  defaultSize?: string;
+  defaultKb?: string;
+  defaultWmm?: string;
+  defaultHmm?: string;
+  title?: string;
+  description?: string;
+}) {
+  const params = useSearchParams();
+  const sizeParam = params.get("size") ?? defaultSize;
   const [file, setFile] = useState<File | null>(null);
-  const [sizeId, setSizeId] = useState(photoSizes[1].id);
-  const [customW, setCustomW] = useState("35");
-  const [customH, setCustomH] = useState("45");
-  const [targetKb, setTargetKb] = useState("");
-  const [background, setBackground] = useState("#ffffff");
+  const [sizeId, setSizeId] = useState(() =>
+    photoSizes.some((s) => s.id === sizeParam) ? sizeParam! : photoSizes[1].id
+  );
+  const [customW, setCustomW] = useState(() => params.get("wmm") ?? defaultWmm ?? "35");
+  const [customH, setCustomH] = useState(() => params.get("hmm") ?? defaultHmm ?? "45");
+  const [targetKb, setTargetKb] = useState(() => params.get("kb") ?? defaultKb ?? "");
+  const [background, setBackground] = useState(() => {
+    const bg = params.get("bg");
+    return bg && /^#?[0-9a-fA-F]{6}$/.test(bg) ? `#${bg.replace(/^#/, "")}` : "#ffffff";
+  });
   const [zoom, setZoom] = useState(1);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{
@@ -98,10 +120,7 @@ export default function PassportPhotoPage() {
   const previewAspect = widthMm && heightMm ? `${widthMm} / ${heightMm}` : "35 / 45";
 
   return (
-    <ToolLayout
-      title="Passport Photo Maker"
-      description="Crop and resize a photo to an exact passport, visa, or ID-card size."
-    >
+    <ToolLayout title={title} description={description}>
       <FileDropzone
         accept="image/jpeg,image/png"
         onFiles={(files) => {
@@ -247,5 +266,13 @@ export default function PassportPhotoPage() {
         </div>
       )}
     </ToolLayout>
+  );
+}
+
+export default function PassportPhotoPage() {
+  return (
+    <Suspense fallback={null}>
+      <PassportPhotoTool />
+    </Suspense>
   );
 }

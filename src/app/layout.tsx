@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
+import { GoogleAnalytics } from "@next/third-parties/google";
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
@@ -11,6 +12,8 @@ import { InstallPrompt } from "@/components/install-prompt";
 import { PwaInstallProvider } from "@/components/pwa-install-context";
 import { siteUrl, siteName, siteTagline } from "@/lib/toolSeo";
 import { tools } from "@/lib/tools";
+
+const adsenseClient = process.env.NEXT_PUBLIC_ADSENSE_ID || "ca-pub-7586690529424741";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -105,6 +108,7 @@ export const metadata: Metadata = {
     "ai:site-type": "tools",
     "ai:privacy": "on-device",
     "ai:pricing": "free",
+    "google-adsense-account": adsenseClient,
     "format-detection": "telephone=no",
     ...(process.env.GOOGLE_SITE_VERIFICATION
       ? { "google-site-verification": process.env.GOOGLE_SITE_VERIFICATION }
@@ -191,6 +195,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <InstallPrompt />
           </SearchOverlayProvider>
         </PwaInstallProvider>
+        <script
+          async
+          src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${adsenseClient}`}
+          crossOrigin="anonymous"
+        />
+        {process.env.NEXT_PUBLIC_GA_ID && (
+          <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
+        )}
       </body>
     </html>
   );

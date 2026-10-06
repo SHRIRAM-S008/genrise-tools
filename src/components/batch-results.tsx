@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { CheckCircle2, Loader2, TriangleAlert, X } from "lucide-react";
+import { slugFromPath, trackEvent } from "@/lib/analytics";
 import DownloadButton from "@/components/DownloadButton";
 import { formatBytes } from "@/lib/imageCore";
 import { useObjectUrl } from "@/lib/useObjectUrl";
@@ -80,6 +82,7 @@ function BatchRow({
   onRemove?: (id: string) => void;
   preview: boolean;
 }) {
+  const pathname = usePathname();
   const url = useObjectUrl(item.result?.blob);
   const saved =
     item.result && item.file.size > 0
@@ -122,6 +125,7 @@ function BatchRow({
         <a
           href={url}
           download={item.result.filename}
+          onClick={() => trackEvent("result_download", { tool_slug: slugFromPath(pathname) })}
           className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium hover:border-primary/40"
         >
           Download

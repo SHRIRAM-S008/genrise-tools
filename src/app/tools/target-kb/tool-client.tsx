@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ToolLayout from "@/components/ToolLayout";
 import FileDropzone from "@/components/FileDropzone";
 import { ImageResult } from "@/components/image-result";
@@ -20,12 +21,33 @@ const FORMAT_OPTIONS: { value: FormatChoice; label: string }[] = [
   { value: "image/webp", label: "WebP" },
 ];
 
-export default function TargetKbPage() {
+function formatParam(value: string | null): FormatChoice {
+  if (value === "jpg" || value === "jpeg") return "image/jpeg";
+  if (value === "png") return "image/png";
+  if (value === "webp") return "image/webp";
+  return "auto";
+}
+
+function positiveInt(value: string | null): number | "" {
+  const n = Number(value);
+  return value !== null && Number.isInteger(n) && n > 0 ? n : "";
+}
+
+export function TargetKbTool({
+  defaultKb,
+  title = "UploadReady",
+  description = "Tell us the exact size you need. We'll compress your photo to fit — no sliders required.",
+}: {
+  defaultKb?: number;
+  title?: string;
+  description?: string;
+}) {
+  const params = useSearchParams();
   const [file, setFile] = useState<File | null>(null);
-  const [targetKb, setTargetKb] = useState<number>(50);
-  const [format, setFormat] = useState<FormatChoice>("auto");
-  const [width, setWidth] = useState<number | "">("");
-  const [height, setHeight] = useState<number | "">("");
+  const [targetKb, setTargetKb] = useState<number>(() => positiveInt(params.get("kb")) || defaultKb || 50);
+  const [format, setFormat] = useState<FormatChoice>(() => formatParam(params.get("format")));
+  const [width, setWidth] = useState<number | "">(() => positiveInt(params.get("w")));
+  const [height, setHeight] = useState<number | "">(() => positiveInt(params.get("h")));
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TargetKbResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,10 +79,7 @@ export default function TargetKbPage() {
   }
 
   return (
-    <ToolLayout
-      title="UploadReady"
-      description="Tell us the exact size you need. We'll compress your photo to fit — no sliders required."
-    >
+    <ToolLayout title={title} description={description}>
       <FileDropzone
         accept="image/jpeg,image/png,image/webp"
         onFiles={(files) => {
@@ -166,5 +185,13 @@ export default function TargetKbPage() {
         </ImageResult>
       )}
     </ToolLayout>
+  );
+}
+
+export default function TargetKbPage() {
+  return (
+    <Suspense fallback={null}>
+      <TargetKbTool />
+    </Suspense>
   );
 }

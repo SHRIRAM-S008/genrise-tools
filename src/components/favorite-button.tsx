@@ -2,6 +2,7 @@
 
 import { Star } from "lucide-react";
 import { toggleFavorite, useFavoriteTools } from "@/lib/toolUsage";
+import { trackEvent } from "@/lib/analytics";
 
 export function FavoriteButton({ slug }: { slug: string }) {
   const favorites = useFavoriteTools();
@@ -10,7 +11,10 @@ export function FavoriteButton({ slug }: { slug: string }) {
   return (
     <button
       type="button"
-      onClick={() => toggleFavorite(slug)}
+      onClick={() => {
+        toggleFavorite(slug);
+        trackEvent("favorite_toggled", { tool_slug: slug, favorited: !isFavorite });
+      }}
       aria-pressed={isFavorite}
       aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
       className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary active:bg-muted"

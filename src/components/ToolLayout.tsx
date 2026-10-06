@@ -11,6 +11,7 @@ import { ToolNextSteps } from "@/components/tool-next-steps";
 import { ToolSample } from "@/components/tool-sample";
 import { tools } from "@/lib/tools";
 import { recordToolVisit } from "@/lib/toolUsage";
+import { trackEvent } from "@/lib/analytics";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import { categoryTileClass } from "@/lib/categoryStyles";
 
@@ -22,12 +23,20 @@ interface ToolLayoutProps {
 
 export default function ToolLayout({ title, description, children }: ToolLayoutProps) {
   const pathname = usePathname();
-  const slug = pathname.split("/").pop() ?? "";
+  // Variant pages nest under a tool (/tools/target-kb/50kb) — resolve the parent
+  // tool slug rather than the last segment so badges/next-steps/visits still work.
+  const slug =
+    tools.find((t) => pathname === `/tools/${t.slug}` || pathname.startsWith(`/tools/${t.slug}/`))?.slug ??
+    pathname.split("/").pop() ??
+    "";
   const tool = tools.find((t) => t.slug === slug);
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
-    if (tool) recordToolVisit(tool.slug);
+    if (tool) {
+      recordToolVisit(tool.slug);
+      trackEvent("tool_view", { tool_slug: tool.slug, tool_category: tool.category });
+    }
   }, [tool]);
 
   const transition = reducedMotion

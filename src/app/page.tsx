@@ -1,4 +1,5 @@
 import { HomeHero } from "@/components/home-hero";
+import { FormsStrip } from "@/components/forms-strip";
 import { PopularToolsPreview } from "@/components/popular-tools-preview";
 import { YourTools } from "@/components/your-tools";
 import { StatsStrip } from "@/components/stats-strip";
@@ -22,6 +23,7 @@ export default function Home() {
         <AdSlot className="mt-24" />
         <main className="flex w-full max-w-6xl flex-1 flex-col pb-20">
           <YourTools />
+          <FormsStrip />
           <PopularToolsPreview />
           <KitsShowcase />
           <NewsletterCapture />
